@@ -2,7 +2,7 @@ Uuid: d9e05bf81c8f4bae8a5b0b01955c5578
 ExtensionType: 1
 Name: TokenJar
 RepoName: tokenjar
-ScreenVersion: 2.0
+ScreenVersion: 2.1
 SerialVersion: 3
 MinPlatformVersion: 0
 ProOnly: False

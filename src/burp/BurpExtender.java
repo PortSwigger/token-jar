@@ -1,8 +1,6 @@
 package burp;
 
-import com.google.common.primitives.Bytes; //Guava
 import java.io.PrintStream;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -11,6 +9,8 @@ import tokenJar.*;
 
 public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListener, IExtensionStateListener
 {
+    public static final String NAME="TokenJar";
+    public static final String VERSION=" 2.1 "; //always 5 chars
     private IBurpExtenderCallbacks callbacks;
     private IExtensionHelpers helpers;
     private Tab tab;
@@ -22,7 +22,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
         helpers = callbacks.getHelpers();
         
         // Set extension name
-        callbacks.setExtensionName("TokenJar 2.0");
+        callbacks.setExtensionName(NAME+" "+VERSION);
         
         tab = new Tab(callbacks);
         dataModel = tab.getDataModel();
@@ -105,7 +105,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
             callbacks.printOutput("<<< Processing Response Message");
             callbacks.printOutput(". Path=" + path);
             if (HTTP_message.getComment()==null)
-                HTTP_message.setComment("Tokenjar:");
+                HTTP_message.setComment(NAME+":");
         }
         
         String HTTP_response = null;
@@ -169,7 +169,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
                 callbacks.printOutput(">>> Processing Request Message");
                 callbacks.printOutput(". Path=" + requestInfo.getUrl().getPath());
                 if (HTTP_message.getComment()==null)
-                    HTTP_message.setComment("Tokenjar:");
+                    HTTP_message.setComment(NAME+":");
         }
         
         //1. Identify all params that are also in the table
@@ -205,6 +205,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
         boolean oContLenProccess = false;
         
         /*Processing headers*/
+        int oCursor=0; //Assumption: headers are proccessed in top down order
         for(int i=0; i<HTTP_headers.size(); i++){
             
             if (dataModel.getMasterDebug()) {callbacks.printOutput(". Header["+i+"]="+HTTP_headers.get(i));} /*Debug enabled*/
@@ -215,7 +216,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
             if ( (id = dataModel.getByNameType(HTTP_headerName, (byte) 0))!=null ) {
                 String HTTP_header = HTTP_headers.get(i);
                 
-                int headerStart = Bytes.indexOf(oRequest, HTTP_header.getBytes());
+                int headerStart = indexOf(oRequest, oCursor, HTTP_header.getBytes());
                 int valueStart = headerStart + HTTP_headerName.length() + 2; //2 accounts for ": " 
                 int valueEnd = headerStart + HTTP_header.length();
                 String newValue = dataModel.getValue(id);
@@ -225,17 +226,18 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
                                               
                 delta = newValue.length() - (valueEnd - valueStart);
                 deltaRequest += delta;
+                oCursor = valueEnd; //next time search from here
             }
             
             if ( HTTP_headerName.equals("Content-Length")) {
                 String Content_Length = HTTP_headers.get(i);                
                 try {                    
-                    oContLenStart = Bytes.indexOf(oRequest, Content_Length.getBytes());
+                    oContLenStart = indexOf(oRequest, oCursor, Content_Length.getBytes());
                     oContLenLength = Content_Length.length();
                     oContLenValue = Integer.parseInt(Content_Length.substring("Content-Length:".length()).trim());                            
                      
                     oContLenProccess = true;
-                    break;
+                    oCursor = oContLenStart+oContLenLength;
                 }
                 catch (NumberFormatException e){
                     // do nothing, let the for search for another "Content-Length" header
@@ -272,7 +274,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
            
             //Content-Length update
             if (oContLenProccess && oParamStart > oContLenStart){ //found the parameter just after Content-Length?
-                //copy everithing before the Content-Length
+                //copy everything before the Content-Length
                 delta = oContLenStart-oStart; 
                 System.arraycopy(oRequest, oStart, nRequest, nStart, delta);
                 oStart+= delta;
@@ -336,7 +338,20 @@ public class BurpExtender implements IBurpExtender, IHttpListener, IProxyListene
             callbacks.printOutput("..........................."); 
         }            
         HTTP_message.setRequest(nRequest);
-    } 
+    }
+    private int indexOf(byte[] source, int startSource, byte[] target) {
+        for(int i = startSource; i < source.length - target.length+1; i++) {
+            boolean found = true;
+            for(int j = 0; j < target.length; j++) {
+               if (source[i+j] != target[j]) {
+                   found = false;
+                   break;
+               }
+            }
+            if (found) return i;
+         }
+       return -1;  
+   } 
 }
 
 class enhancedParameter{

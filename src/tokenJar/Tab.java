@@ -6,20 +6,29 @@
 package tokenJar;
 
 import burp.IBurpExtenderCallbacks;
+import static burp.BurpExtender.*;
 import burp.ITab;
+import com.google.common.primitives.Bytes;
+import com.google.gson.Gson;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
+import java.io.FileWriter;
 import javax.swing.table.DefaultTableModel;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.io.RandomAccessFile;
+import java.nio.channels.Channels;
+import java.util.ArrayList;
 import java.util.Vector;
 import javax.swing.JFileChooser;
 import javax.swing.event.TableModelEvent;
@@ -45,6 +54,17 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
      */
     public Tab(IBurpExtenderCallbacks callbacks) {
         initComponents();
+        
+        tokenTable.setAutoResizeMode(javax.swing.JTable.AUTO_RESIZE_OFF);
+        
+        //On window resize resize also the columns
+        this.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                resizeColumns();
+            }
+        });
+        
         this.callbacks = callbacks;
         
         persistSettings = new PersistSettings(callbacks, 50);
@@ -53,7 +73,8 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         dataModel = new DataModel(tableModel, callbacks);
        
         //Restore table or put demo data
-        this.restoreTableData(persistSettings.restore());       
+        this.restoreTableData(persistSettings.restore()); 
+        this.resizeColumns();        
         this.setStatusColor();
         
         //tokenTable.getColumnModel().removeColumn(null);  //in case I want to hide some columns
@@ -61,6 +82,9 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         //(re)Initialize dataModel
         dataModel.init();
 
+        //load Last Config Path from burp settings
+        this.lastPathConfig.setText(persistSettings.restoreLastConfigPath());
+        
         tokenTable.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
         
         tableModel.addTableModelListener(this);
@@ -111,7 +135,11 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         
         /*New "empty" row do just init */
         if (type==TableModelEvent.INSERT || type == TableModelEvent.DELETE){
+            /* Reinit the table*/
+            /* Save settings in Burp storage*/
             dataModel.init();
+            Vector dataInTable = tableModel.getDataVector();
+            persistSettings.save(dataInTable);
             return;
         }        
         /*Value already updated in Datamodel*/
@@ -160,6 +188,8 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         masterIntruder = new javax.swing.JCheckBox();
         masterProxy = new javax.swing.JCheckBox();
         jLabelNewHere = new javax.swing.JLabel();
+        lastPathConfig = new javax.swing.JTextField();
+        jLabel1 = new javax.swing.JLabel();
 
         tokenTable.setAutoCreateRowSorter(true);
         tokenTable.setModel(new javax.swing.table.DefaultTableModel(
@@ -182,14 +212,6 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         tokenTable.setDragEnabled(true);
         jScrollPane2.setViewportView(tokenTable);
         tokenTable.getColumnModel().getSelectionModel().setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
-        if (tokenTable.getColumnModel().getColumnCount() > 0) {
-            tokenTable.getColumnModel().getColumn(0).setMaxWidth(55);
-            tokenTable.getColumnModel().getColumn(2).setMaxWidth(50);
-            tokenTable.getColumnModel().getColumn(3).setMaxWidth(37);
-            tokenTable.getColumnModel().getColumn(4).setMaxWidth(40);
-            tokenTable.getColumnModel().getColumn(5).setMaxWidth(50);
-            tokenTable.getColumnModel().getColumn(6).setMaxWidth(40);
-        }
 
         addToken.setText("Add");
         addToken.addActionListener(new java.awt.event.ActionListener() {
@@ -284,6 +306,11 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         jLabelNewHere.setText("First time here >>");
         jLabelNewHere.setToolTipText("");
 
+        lastPathConfig.setText("optionaly config path");
+        lastPathConfig.setToolTipText("Use it to quickly specify the path for load/save");
+
+        jLabel1.setText("Last config.");
+
         javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
         jPanel2Layout.setHorizontalGroup(
@@ -322,7 +349,11 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
                                 .addComponent(openRegexWindow, javax.swing.GroupLayout.PREFERRED_SIZE, 69, javax.swing.GroupLayout.PREFERRED_SIZE))))
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel2Layout.createSequentialGroup()
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(goToSite1)))
+                        .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(goToSite1, javax.swing.GroupLayout.Alignment.TRAILING)
+                            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                                .addComponent(jLabel1)
+                                .addComponent(lastPathConfig, javax.swing.GroupLayout.PREFERRED_SIZE, 71, javax.swing.GroupLayout.PREFERRED_SIZE)))))
                 .addContainerGap())
         );
 
@@ -352,6 +383,10 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
                         .addGap(49, 49, 49)
                         .addComponent(openRegexWindow)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addComponent(jLabel1)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(lastPathConfig, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                             .addComponent(exportConf, javax.swing.GroupLayout.PREFERRED_SIZE, 26, javax.swing.GroupLayout.PREFERRED_SIZE)
                             .addComponent(importConf, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 26, javax.swing.GroupLayout.PREFERRED_SIZE)))
@@ -386,16 +421,14 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         int dialogButton = JOptionPane.YES_NO_OPTION;
         int dialogResult = JOptionPane.showConfirmDialog(this, "Are you sure you want to remove the selected line(s)?", "Warning", dialogButton);
         if(dialogResult == 0) { /*0 > Yes   1 > No */  
-            // BUG: No success in fixing the freeze when deleting the last row of the table after a sort.
             SwingUtilities.invokeLater(new Runnable() {
                     public void run() {
                         try{
                             int[] selectedRows = tokenTable.getSelectedRows();
                             for (int i = 0; i < selectedRows.length; i++){
-                                int selectedRow = tokenTable.convertRowIndexToModel(selectedRows[i]);
-                                /*DEBUG*/callbacks.printOutput("selectedRow =  " + selectedRow );
-                                /*DEBUG*/callbacks.printOutput("selectedRow - i =  " + (selectedRow - i) );
-                                tableModel.removeRow(selectedRow - i);
+                                // -i adjusts the index, it counts for already deleted rows, the rest of the rows "move" up
+                                int selectedRow = tokenTable.convertRowIndexToModel(selectedRows[i]-i);
+                                tableModel.removeRow(selectedRow);
                             }
                         }catch(Exception ex){
                             PrintStream burpErr = new PrintStream(callbacks.getStderr());
@@ -452,18 +485,28 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
     
     private void exportConfActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_exportConfActionPerformed
         JFileChooser fileChooser = new JFileChooser();
+        //use the path from Last Config
+        //in case of invalid path, it fails safe silently
+        fileChooser.setSelectedFile(new File(this.lastPathConfig.getText()));
         int result = fileChooser.showSaveDialog(this);
 
         switch (result) {
         case JFileChooser.APPROVE_OPTION:
-            File file = fileChooser.getSelectedFile();
+            File file = fileChooser.getSelectedFile();            
             try (
-                FileOutputStream fileOut = new FileOutputStream(file);
-                ObjectOutputStream objectOut = new ObjectOutputStream(fileOut);
+                FileWriter fileOut = new FileWriter(file);
             ){
+                Gson gson = new Gson();
                 Vector dataInTable = tableModel.getDataVector();
-                objectOut.writeObject(dataInTable);
-            } catch (IOException ex) {
+                String dataToStore = gson.toJson(dataInTable);
+                dataToStore = NAME + VERSION + dataToStore;                
+                fileOut.write(dataToStore);
+                //set Last Config Path to the last loaded file
+                this.lastPathConfig.setText(file.getAbsolutePath());
+                //save Last Config Path in burp settings
+                persistSettings.saveLastConfigPath(file.getAbsolutePath());
+                
+            } catch (Exception ex) {
                 PrintWriter stderr = new PrintWriter(callbacks.getStderr());
                 ex.printStackTrace(stderr);
             }
@@ -477,20 +520,87 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
     }//GEN-LAST:event_exportConfActionPerformed
 
     private void importConfActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_importConfActionPerformed
-        //*DEBUG*/callbacks.printOutput("importConfActionPerformed()");
-        
         JFileChooser fileChooser = new JFileChooser();
+        //use the path from Last Config
+        //in case of invalid path, it fails safe silently
+        fileChooser.setSelectedFile(new File(this.lastPathConfig.getText()));
         int result = fileChooser.showOpenDialog(this);
         switch (result) {
         case JFileChooser.APPROVE_OPTION:
             File file = fileChooser.getSelectedFile();
-            try (
-                FileInputStream fileIn = new FileInputStream(file);
-                ObjectInputStream objectIn = new ObjectInputStream(fileIn); 
-            ){    
-                //*DEBUG*/callbacks.printOutput("2");
-                restoreTableData((Vector) objectIn.readObject());               
-            } catch (IOException | ClassNotFoundException ex) {
+            
+            //Magic Bytes
+            final byte mbSerializedObj[] = {(byte)0xAC, (byte)0xED, (byte)0x00, (byte)0x05};
+            byte mbFile[] = new byte[8];
+            
+            try (                
+                RandomAccessFile fileIn = new RandomAccessFile(file,"r");
+            ){  
+                //Read magic bytes
+                fileIn.read(mbFile, 0 , NAME.length());
+                
+                /*Attempt to restore data from version TokenJar 2.0*/
+                if (Bytes.indexOf(mbFile, mbSerializedObj)==0){
+                    fileIn.seek(0);                    
+                    try (
+                        InputStream is = Channels.newInputStream(fileIn.getChannel());
+                        ObjectInputStream objectIn = new ObjectInputStream(is); 
+                    ){
+                        Vector dataInTable = (Vector) objectIn.readObject();
+                        restoreTableData(dataInTable);
+                        persistSettings.save(dataInTable);
+                        //set Last Config Path to the last loaded file
+                        this.lastPathConfig.setText(file.getAbsolutePath());
+                        //save Last Config Path in burp settings
+                        persistSettings.saveLastConfigPath(file.getAbsolutePath());
+                    } catch (IOException | ClassNotFoundException ex) {
+                        callbacks.printOutput("! Error loading settings when opening the file of type serialized object");
+                        PrintWriter stderr = new PrintWriter(callbacks.getStderr());
+                        ex.printStackTrace(stderr);
+                    }
+                /*Attempt to restore data from newer version*/
+                } else 
+                    if (Bytes.indexOf(mbFile, NAME.getBytes())==0){                        
+                        try 
+                        {   
+                            //TODO Magic Bytes to be used in future version to check the settings format version number
+                            
+                            //Skip Magic Bytes and Version
+                            int fileStart = NAME.length()+VERSION.length();
+                            int fileLen = (int) fileIn.length()-NAME.length()-VERSION.length();                            
+                            
+                            byte[] fileContent = new byte[fileLen];
+                            
+                            fileIn.seek(fileStart);
+                            fileIn.read(fileContent, 0, fileLen); // wrong results with fileStart as offset 
+
+                            InputStreamReader is = new InputStreamReader(new ByteArrayInputStream(fileContent));
+                            Gson gson = new Gson();                            
+                            Vector restoredDataInTable = (Vector) gson.fromJson(is, Vector.class);
+
+                            //The respored data is a Vector of ArrayLists, the result should be a Vector of Vectors.
+                            Vector dataInTable = new Vector();
+                            for (int i=0; i<restoredDataInTable.size(); i++){
+                                Vector row = new Vector( (ArrayList) restoredDataInTable.elementAt(i));
+                                dataInTable.add(row);
+                            }
+                            restoreTableData(dataInTable);
+                            persistSettings.save(dataInTable);
+                            //set Last Config Path to the last loaded file
+                            this.lastPathConfig.setText(file.getAbsolutePath());
+                            //save Last Config Path in burp settings
+                            persistSettings.saveLastConfigPath(file.getAbsolutePath());
+                            
+                        } catch (Exception ex) {
+                            callbacks.printOutput("! Error loading settings when opening the file of type json");
+                            callbacks.printOutput(ex.toString());               
+                            PrintWriter stderr = new PrintWriter(callbacks.getStderr());
+                            ex.printStackTrace(stderr);                           
+                        }
+                    } else
+                        callbacks.printOutput("! Error - unknown format for the file");
+             
+            } catch (IOException ex) {
                 callbacks.printOutput("! Error when opening the file to restore");
                 PrintWriter stderr = new PrintWriter(callbacks.getStderr());
                 ex.printStackTrace(stderr);
@@ -563,17 +673,20 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
         tableModel.setDataVector(dataInTable, columnsInTable);
         
         dataModel.init();
-        
-        // Duplicate Code: setDataVector distroys these settings, I make them again
+        this.resizeColumns();
+    }
+    
+    private void resizeColumns() {
         tokenTable.getColumnModel().getSelectionModel().setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
-        if (tokenTable.getColumnModel().getColumnCount() > 0) {
-            tokenTable.getColumnModel().getColumn(0).setMaxWidth(55);
-            tokenTable.getColumnModel().getColumn(2).setMaxWidth(50);
-            tokenTable.getColumnModel().getColumn(3).setMaxWidth(37);
-            tokenTable.getColumnModel().getColumn(4).setMaxWidth(40);
-            tokenTable.getColumnModel().getColumn(5).setMaxWidth(50);
-            tokenTable.getColumnModel().getColumn(6).setMaxWidth(40);
+       
+        int tableWidth = this.getWidth() - 120;
+        float[] columnWidthPercentage = {0.03f, 0.09f, 0.03f, 0.03f, 0.03f, 0.03f, 0.03f, 0.1825f, 0.1825f, 0.1825f, 0.1825f};
+        
+        for (int i=0; i<tokenTable.getColumnModel().getColumnCount(); i++){
+            tokenTable.getColumnModel().getColumn(i).setPreferredWidth(Math.round(tableWidth * columnWidthPercentage[i]));
         }
+            
+        //*DEBUG*/callbacks.printOutput("tokenTable.getWidth()  "+tokenTable.getWidth());
     }
     
     
@@ -590,9 +703,11 @@ public class Tab extends javax.swing.JPanel implements ITab, TableModelListener{
     private javax.swing.JButton exportConf;
     private javax.swing.JLabel goToSite1;
     private javax.swing.JButton importConf;
+    private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabelNewHere;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JScrollPane jScrollPane2;
+    private javax.swing.JTextField lastPathConfig;
     private javax.swing.JCheckBox masterDebug;
     private javax.swing.JCheckBox masterEnable;
     private javax.swing.JCheckBox masterIntruder;

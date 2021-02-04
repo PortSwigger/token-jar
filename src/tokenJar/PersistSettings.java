@@ -6,109 +6,161 @@
 package tokenJar;
 
 import burp.IBurpExtenderCallbacks;
+import static burp.BurpExtender.*;
 import com.google.common.base.Strings;
 import com.google.common.collect.EvictingQueue;
+import com.google.gson.Gson;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Vector;
 
 /**
  *
  * @author DanNegrea
  */
-public class PersistSettings {    
+public class PersistSettings {
+    public static final String DEFAULT_LINE = "[[false,\"csrf\",false,false,true,false,false,\"\",\"grp[1]\",\"csrf\\u003d([a-zA-Z0-9]*)\",\"*\"]]";
     private EvictingQueue<String> evalQueue;
     private EvictingQueue<String> regexQueue;
+    private int queueMaxSize;
     
     private final IBurpExtenderCallbacks callbacks;
     
     public PersistSettings(IBurpExtenderCallbacks callbacks){
             this(callbacks, 50);
+            queueMaxSize = 50;
     }
     
-    public PersistSettings(IBurpExtenderCallbacks callbacks, int expMaxSize){        
-        this.evalQueue = EvictingQueue.create(expMaxSize);        
-        this.regexQueue = EvictingQueue.create(expMaxSize);        
+    public PersistSettings(IBurpExtenderCallbacks callbacks, int expMaxSize){
+        this.queueMaxSize = expMaxSize;
+        this.evalQueue = EvictingQueue.create(queueMaxSize);        
+        this.regexQueue = EvictingQueue.create(queueMaxSize);        
         this.callbacks = callbacks;
     }
        
     public void save(Vector dataInTable){
-        try (
-            ByteArrayOutputStream byteArrOut = new ByteArrayOutputStream();
-            ObjectOutputStream objectOut = new ObjectOutputStream(byteArrOut);
-        ){       
-            objectOut.writeObject(dataInTable);
-            callbacks.saveExtensionSetting("dataInTable", byteArrOut.toString());  //Java-Lesson objectOut is not suitable here
-        } catch (IOException ex) {
+        try{            
+            Gson gson = new Gson();
+            String dataToStore = gson.toJson(dataInTable);
+            //Save version fist (5 chars)
+            dataToStore = VERSION + dataToStore;
+            callbacks.saveExtensionSetting(NAME+".dataInTable", dataToStore);
+            //Signal that old format up to TokenJar 2.0 is no longer in use
+            callbacks.saveExtensionSetting("dataInTable", "");            
+        } catch (Exception ex) {
             PrintWriter stderr = new PrintWriter(callbacks.getStderr());
             ex.printStackTrace(stderr);
         }
+        
         save(evalQueue, "evalQueue");
         save(regexQueue, "regexQueue");
     }
     private void save(EvictingQueue<String> queue, String queueName){
-        try (
-            ByteArrayOutputStream byteArrOut = new ByteArrayOutputStream();
-            ObjectOutputStream objectOut = new ObjectOutputStream(byteArrOut);
-        ){            
-            objectOut.writeObject(queue);
-            callbacks.saveExtensionSetting(queueName, byteArrOut.toString());
-        } catch (IOException ex) {
+        try{            
+            Gson gson = new Gson();
+            String dataToStore = gson.toJson(queue);            
+            callbacks.saveExtensionSetting(NAME+"."+queueName, dataToStore);          
+        } catch (Exception ex) {
             PrintWriter stderr = new PrintWriter(callbacks.getStderr());
             ex.printStackTrace(stderr);
         }
     }
-    
-    public Vector restore(){        
+    public void saveLastConfigPath(String path){
+        callbacks.saveExtensionSetting(NAME+".lastConfigPath", path);          
+    }
+ 
+    public Vector restore(){              
+        Vector restoredDataInTable = null;
+        Vector dataInTable = new Vector();
+        
+        /*Attempt to restore data from version TokenJar 2.0*/
         String tableData= callbacks.loadExtensionSetting("dataInTable");
-        Vector dataInTable = null;
-        
-        if (tableData == null)  return null;
-        
-        try (
-            ByteArrayInputStream byteArrIn = new ByteArrayInputStream(tableData.getBytes());
-            ObjectInputStream objectIn = new ObjectInputStream(byteArrIn);
-        ){  
-            //get data in table from the serialized object
-            dataInTable = (Vector) objectIn.readObject();
-            
-            //second objective, attempt to restore the evalQueue and regexQueue
-            evalQueue = restore(evalQueue, "evalQueue");
-            regexQueue = restore(regexQueue, "regexQueue");
-            
-        } catch (IOException | ClassNotFoundException ex) {
-            PrintWriter stderr = new PrintWriter(callbacks.getStderr());
-            ex.printStackTrace(stderr);
+        //if old setting still in settings store
+        if (!Strings.isNullOrEmpty(tableData)){
+            //*DEBUG*/callbacks.printOutput("!Strings.isNullOrEmpty(tableData)");
+            try (
+                ByteArrayInputStream byteArrIn = new ByteArrayInputStream(tableData.getBytes());
+                ObjectInputStream objectIn = new ObjectInputStream(byteArrIn);
+            ){  
+                //get data in table from the serialized object
+                dataInTable = (Vector) objectIn.readObject();
+            } catch (IOException | ClassNotFoundException ex) {
+                PrintWriter stderr = new PrintWriter(callbacks.getStderr());
+                ex.printStackTrace(stderr);
+            }            
         }
-        finally{
-             return dataInTable;
-        }     
+        
+        /*Attempt to restore data from newer version*/
+        if (dataInTable.size()==0) {
+            //*DEBUG*/callbacks.printOutput("dataInTable.size()==0");
+            try 
+            {
+                String strObj = callbacks.loadExtensionSetting(NAME+".dataInTable");                
+                
+                if (!Strings.isNullOrEmpty(strObj) && strObj.length()>5){
+                    //TODO To be used in future version to check the settings format version number
+                    strObj = strObj.substring(5); //Skip version information (5 chars)
+                } else {
+                    /*Demo line if empty*/                
+                    strObj = DEFAULT_LINE;
+                }
+                
+                Gson gson = new Gson();
+                restoredDataInTable = (Vector) gson.fromJson(strObj, Vector.class);
+
+                //The respored data is a Vector of ArrayLists, the result should be a Vector of Vectors.
+                for (int i=0; i<restoredDataInTable.size(); i++){
+                    Vector row = new Vector( (ArrayList) restoredDataInTable.elementAt(i));
+                    dataInTable.add(row);
+                }
+            } catch (Exception ex) {
+                PrintWriter stderr = new PrintWriter(callbacks.getStderr());
+                ex.printStackTrace(stderr);
+               
+                callbacks.printError("Failed to load settings. Restoring default line");
+                String dataToStore = VERSION + DEFAULT_LINE;
+                callbacks.saveExtensionSetting(NAME+".dataInTable", dataToStore);
+            }
+        }        
+        //second objective, attempt to restore the evalQueue and regexQueue
+        evalQueue = restore(evalQueue, "evalQueue");
+        regexQueue = restore(regexQueue, "regexQueue");
+        
+        return dataInTable;
     }
     
-    private EvictingQueue<String> restore(EvictingQueue<String> queue, String queueName){
-        String storedStr= callbacks.loadExtensionSetting(queueName);        
-        if (storedStr == null)  return queue;
-        
-        EvictingQueue<String> newQueue=null;
-        try (
-            ByteArrayInputStream byteArrIn = new ByteArrayInputStream(storedStr.getBytes());
-            ObjectInputStream objectIn = new ObjectInputStream(byteArrIn);
-        ){  
-            newQueue = (EvictingQueue<String>) objectIn.readObject();            
-        } 
-        catch (IOException | ClassNotFoundException ex) {
+    private EvictingQueue<String> restore(EvictingQueue<String> queue, String queueName){   
+        EvictingQueue<String> newQueue= EvictingQueue.create(queueMaxSize);
+        try{
+            String storedStr= callbacks.loadExtensionSetting(NAME+"."+queueName);            
+            if (Strings.isNullOrEmpty(storedStr))  return queue;
+
+            Gson gson = new Gson();
+            String[] storedQueue = gson.fromJson(storedStr, String[].class);
+            
+            for (int i=0; i<storedQueue.length; i++){
+                if( !Strings.isNullOrEmpty(storedQueue[i]) ){
+                    //if expression is contained, remove it and add it fresh
+                    if (newQueue.contains(storedQueue[i])) 
+                        newQueue.remove(storedQueue[i]);     
+                    newQueue.add(storedQueue[i]);            
+                }
+                //*DEBUG*/callbacks.printOutput("newQueue["+i+"]= "+ storedQueue[i]);
+            }
+        } catch (Exception ex) {
             PrintWriter stderr = new PrintWriter(callbacks.getStderr());
             ex.printStackTrace(stderr);
         }
-        finally{
-            if (newQueue==null) return queue; 
-            else return newQueue;
-        }     
-    }   
+        if (newQueue.isEmpty()) return queue; 
+        else return newQueue;
+    } 
+    
+    public String restoreLastConfigPath(){
+        return callbacks.loadExtensionSetting(NAME+".lastConfigPath");
+    }
     
     public void pushEval(String expression){
         if( !Strings.isNullOrEmpty(expression) ){
@@ -139,4 +191,3 @@ public class PersistSettings {
             return new Object[0];
     }  
 }
-

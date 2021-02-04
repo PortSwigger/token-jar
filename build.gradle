@@ -5,7 +5,8 @@ repositories {
 }
 
 dependencies {
-    compile 'com.google.guava:guava:21.0'
+   compile 'com.google.guava:guava:28.2-jre'
+   compile 'com.google.code.gson:gson:2.8.6'   
 }
 
 sourceSets {
